@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$LOCAL_BIN"
 
-NVIM_VERSION="v0.10.4"
+NVIM_VERSION="v0.12.3"   # config uses the native LSP API (vim.lsp.config), needs >= 0.11
 RIPGREP_VERSION="14.1.1"
 FD_VERSION="10.2.0"
 TMUX_VERSION="3.4"
@@ -71,15 +71,18 @@ ensure_path() {
 # neovim
 # ---------------------------------------------------------------------------
 
+NVIM_MIN="0.11.0"   # minimum the config supports (native vim.lsp.config API)
+
 install_nvim() {
     if command_exists nvim; then
         local current
-        current="$(nvim --version | head -1 | grep -oP 'v\d+\.\d+\.\d+')"
-        if [[ "$current" == "$NVIM_VERSION" ]]; then
-            ok "neovim $NVIM_VERSION already installed"
+        current="$(nvim --version | head -1 | sed 's/.*v\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/')"
+        # any version >= NVIM_MIN is fine; don't churn just because brew is newer
+        if [[ "$(printf '%s\n' "$NVIM_MIN" "$current" | sort -V | head -1)" == "$NVIM_MIN" ]]; then
+            ok "neovim $current already installed (>= $NVIM_MIN)"
             return
         fi
-        warn "neovim $current found, upgrading to $NVIM_VERSION"
+        warn "neovim $current found, need >= $NVIM_MIN, installing $NVIM_VERSION"
     fi
 
     info "Installing neovim $NVIM_VERSION..."
@@ -92,7 +95,14 @@ install_nvim() {
             exit 1
         fi
     else
-        local nvim_url="https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim.appimage"
+        # release assets >= 0.11 are named nvim-linux-<arch>.appimage (arm uses arm64)
+        local appimage_arch
+        case "$(uname -m)" in
+            x86_64|amd64) appimage_arch="x86_64" ;;
+            aarch64|arm64) appimage_arch="arm64" ;;
+            *) err "Unsupported architecture: $(uname -m)"; exit 1 ;;
+        esac
+        local nvim_url="https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-${appimage_arch}.appimage"
         curl -fsSL "$nvim_url" -o "$LOCAL_BIN/nvim.appimage"
         chmod u+x "$LOCAL_BIN/nvim.appimage"
 
@@ -119,7 +129,7 @@ install_nvim() {
 install_tmux() {
     if command_exists tmux; then
         local current
-        current="$(tmux -V | grep -oP '[\d.]+')"
+        current="$(tmux -V | sed 's/[^0-9.]//g')"
         if [[ "$(printf '%s\n' "$TMUX_VERSION" "$current" | sort -V | head -1)" == "$TMUX_VERSION" ]]; then
             ok "tmux $current already installed (>= $TMUX_VERSION)"
             return
@@ -270,6 +280,14 @@ install_configs() {
     # tmux
     cp "$SCRIPT_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
     ok ".tmux.conf -> ~/.tmux.conf"
+
+    # ghostty (GUI terminal — only relevant on a local machine with a display,
+    # so skip it on headless HPC nodes)
+    if is_macos; then
+        mkdir -p "$HOME/.config/ghostty"
+        cp "$SCRIPT_DIR/ghostty/config" "$HOME/.config/ghostty/config"
+        ok "ghostty config -> ~/.config/ghostty/config"
+    fi
 
     # tpm
     if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then

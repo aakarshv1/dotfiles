@@ -110,6 +110,35 @@ Once you learn the grammar, you can *construct* commands you've never seen befor
     prefix Ctrl-r           restore session (resurrect)
 
 
+## Python LSP + venvs (pyright)
+
+pyright resolves imports from the active interpreter. If it can't find a venv it
+falls back to system python and flags "unresolved import" for installed packages.
+uv always creates the venv at `<project>/.venv`. Three ways to point pyright at it:
+
+    source .venv/bin/activate && nvim    # per-launch; pyright honors $VIRTUAL_ENV
+    [tool.pyright] in pyproject.toml      # per-project, editor-agnostic:
+        venvPath = "."
+        venv = ".venv"
+
+Best: auto-detect once in init.lua so no per-project config is needed:
+
+    vim.lsp.config("pyright", {
+        on_init = function(client)
+            local root = client.config.root_dir
+            local venv_py = root and (root .. "/.venv/bin/python")
+            if venv_py and vim.uv.fs_stat(venv_py) then
+                client.settings = vim.tbl_deep_extend("force", client.settings or {}, {
+                    python = { pythonPath = venv_py },
+                })
+                client.notify("workspace/didChangeConfiguration", { settings = client.settings })
+            end
+        end,
+    })
+
+After changing interpreter/config: :LspRestart
+
+
 ## Recommended Daily Workflow
 
     ssh cluster

@@ -1,0 +1,41 @@
+# =============================================================================
+# GHOSTTY CONFIG
+# =============================================================================
+#
+# Installation:
+#   1. brew install --cask ghostty
+#   2. Copy this file to ~/.config/ghostty/config (setup.sh does this for you)
+#   3. Reload config inside Ghostty with Cmd+Shift+, (or just relaunch)
+#
+# WHY Ghostty over Terminal.app:
+#   - Terminal.app cannot render 24-bit truecolor, so the catppuccin theme in
+#     neovim/tmux looks washed out. Ghostty is GPU-accelerated, truecolor, fast,
+#     and needs almost no config to look great.
+#
+# Full option reference: https://ghostty.org/docs/config/reference
+# List all themes:        ghostty +list-themes
+# =============================================================================
+
+# theme — matches the neovim (catppuccin mocha) and tmux color scheme.
+# Ghostty ships catppuccin built in, so no external file is needed.
+# (Run `ghostty +list-themes` to see exact names — they're title-cased.)
+theme = Catppuccin Mocha
+
+# font — needs a Nerd Font so statusline / which-key icons render.
+# Install one with: brew install --cask font-jetbrains-mono-nerd-font
+font-family = "JetBrainsMono Nerd Font"
+font-size = 14
+
+# a little breathing room around the text
+window-padding-x = 8
+window-padding-y = 8
+
+# treat the left Option key as Alt so terminal/tmux Alt-bindings work,
+# while keeping the right Option free for typing accented characters
+macos-option-as-alt = left
+
+# restore windows/tabs when reopening Ghostty
+window-save-state = always
+
+# don't prompt when closing a window that's just running a shell
+confirm-close-surface = false

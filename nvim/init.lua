@@ -198,6 +198,8 @@ require("lazy").setup({
     --   - makes python, lua, bash, C++, CUDA all look great out of the box
     {
         "nvim-treesitter/nvim-treesitter",
+        branch = "master", -- the 'main' branch is an in-progress rewrite that drops the
+                           -- classic require('nvim-treesitter.configs').setup() API used below
         build = ":TSUpdate",
         config = function()
             require("nvim-treesitter.configs").setup({
@@ -225,14 +227,17 @@ require("lazy").setup({
     -- ======================================================================
     -- LSP: language server protocol
     -- ======================================================================
-    -- WHY nvim-lspconfig + mason over alternatives:
+    -- Neovim 0.11+ ships a native LSP config API (vim.lsp.config / vim.lsp.enable),
+    -- but it does NOT ship the per-server definitions (cmd, filetypes, root markers).
+    -- Those still come from the nvim-lspconfig plugin, which now provides them as
+    -- runtime lsp/*.lua files that the native API consumes. So the modern stack is:
+    --   - nvim-lspconfig : server definitions (no more lspconfig[server].setup{} calls)
+    --   - mason          : portably installs the server binaries (pyright, clangd, ...)
+    --   - mason-lspconfig: installs the servers via mason and auto-enables them
+    --
+    -- WHY this over alternatives:
     --   - coc.nvim: heavier, node.js dependency, its own plugin ecosystem
-    --     (duplicates neovim's native LSP client)
     --   - ale: linting only, no full LSP support
-    --   - nvim-lspconfig: thin wrapper around neovim's built-in LSP client,
-    --     minimal overhead, maximum control
-    --   - mason: manages LSP server binaries so you don't have to pip/npm
-    --     install them manually on every cluster node
 
     -- mason: portable LSP/formatter/linter installer
     {
@@ -242,46 +247,19 @@ require("lazy").setup({
         end,
     },
 
-    -- bridge between mason and lspconfig
+    -- mason-lspconfig: installs the servers listed below and, via its default
+    -- automatic_enable, calls vim.lsp.enable() for each once installed.
+    -- (Server names here are lspconfig names, e.g. lua_ls, not mason package names.)
     {
         "williamboman/mason-lspconfig.nvim",
-        dependencies = { "williamboman/mason.nvim", "neovim/nvim-lspconfig" },
+        dependencies = {
+            "williamboman/mason.nvim",
+            "neovim/nvim-lspconfig", -- provides the per-server definitions
+        },
         config = function()
             require("mason-lspconfig").setup({
-                ensure_installed = {
-                    "pyright",    -- python (fast, good type inference)
-                    "lua_ls",     -- lua (for editing neovim config)
-                    "clangd",     -- C/C++/CUDA
-                    "bashls",     -- bash/shell scripts
-                    "ruff",       -- python linter/formatter (replaces flake8+black+isort)
-                },
+                ensure_installed = { "pyright", "lua_ls", "clangd", "bashls", "ruff" },
             })
-        end,
-    },
-
-    -- actual LSP configuration
-    {
-        "neovim/nvim-lspconfig",
-        dependencies = { "williamboman/mason-lspconfig.nvim" },
-        config = function()
-            local lspconfig = require("lspconfig")
-
-            -- shared on_attach: set keymaps when an LSP server attaches to a buffer
-            local on_attach = function(_, bufnr)
-                local opts = { buffer = bufnr }
-                map("n", "gd", vim.lsp.buf.definition, opts)          -- go to definition
-                map("n", "gr", vim.lsp.buf.references, opts)          -- find references
-                map("n", "gI", vim.lsp.buf.implementation, opts)      -- go to implementation
-                map("n", "K", vim.lsp.buf.hover, opts)                -- show docs on hover
-                map("n", "<leader>rn", vim.lsp.buf.rename, opts)      -- rename symbol
-                map("n", "<leader>ca", vim.lsp.buf.code_action, opts) -- code actions
-                map("n", "<leader>D", vim.lsp.buf.type_definition, opts)
-            end
-
-            local servers = { "pyright", "lua_ls", "clangd", "bashls", "ruff" }
-            for _, server in ipairs(servers) do
-                lspconfig[server].setup({ on_attach = on_attach })
-            end
         end,
     },
 
@@ -367,7 +345,10 @@ require("lazy").setup({
         config = function()
             require("lualine").setup({
                 options = {
-                    theme = "catppuccin",
+                    -- "auto" derives the statusline colors from the active colorscheme.
+                    -- (catppuccin ships flavour-specific themes like "catppuccin-mocha",
+                    -- not a plain "catppuccin", so "auto" is the robust choice.)
+                    theme = "auto",
                     section_separators = "",    -- clean look, no powerline arrows
                     component_separators = "",
                 },
@@ -417,4 +398,41 @@ require("lazy").setup({
     -- lazy.nvim options
     checker = { enabled = false }, -- don't auto-check for plugin updates on HPC
     change_detection = { notify = false },
+})
+
+
+-- ---------------------------------------------------------------------------
+-- 5. LSP CONFIGURATION (neovim 0.11+ native API)
+-- ---------------------------------------------------------------------------
+-- mason-lspconfig (section 4) installs and enables the servers. Here we only
+-- need two things the plugin doesn't do for us:
+--   1. keymaps, set via an autocmd that fires when any server attaches
+--   2. per-server setting overrides via vim.lsp.config(), which merge onto the
+--      base definitions that nvim-lspconfig provides
+-- Servers we don't override (pyright, clangd, bashls, ruff) need no entry here;
+-- their defaults are correct out of the box.
+
+-- LSP keymaps (set once when any server attaches to a buffer)
+vim.api.nvim_create_autocmd("LspAttach", {
+    callback = function(args)
+        local opts = { buffer = args.buf }
+        map("n", "gd", vim.lsp.buf.definition, opts)
+        map("n", "gr", vim.lsp.buf.references, opts)
+        map("n", "gI", vim.lsp.buf.implementation, opts)
+        map("n", "K", vim.lsp.buf.hover, opts)
+        map("n", "<leader>rn", vim.lsp.buf.rename, opts)
+        map("n", "<leader>ca", vim.lsp.buf.code_action, opts)
+        map("n", "<leader>D", vim.lsp.buf.type_definition, opts)
+    end,
+})
+
+-- lua_ls override: teach it about the LuaJIT runtime and neovim's own lua API
+-- so editing this config doesn't flood you with "undefined global vim" warnings
+vim.lsp.config("lua_ls", {
+    settings = {
+        Lua = {
+            runtime = { version = "LuaJIT" },
+            workspace = { library = vim.api.nvim_get_runtime_file("", true) },
+        },
+    },
 })

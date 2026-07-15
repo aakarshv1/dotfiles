@@ -2,6 +2,19 @@
 
 Terminal-first dev environment: neovim + tmux + claude code.
 
+## Terminal app
+
+On macOS, use **[Ghostty](https://ghostty.org)** rather than the built-in Terminal.app —
+Terminal.app can't render 24-bit truecolor, so the catppuccin theme looks washed out.
+
+```bash
+brew install --cask ghostty font-jetbrains-mono-nerd-font
+```
+
+`setup.sh` copies `ghostty/config` to `~/.config/ghostty/config`. The Nerd Font is needed
+for the statusline / which-key icons to render. (WezTerm and Kitty are good alternatives;
+iTerm2 works but is heavier.)
+
 ## Install
 
 ```bash
@@ -31,6 +44,8 @@ dotfiles/
 │   └── init.lua          # neovim config (plugins, LSP, keybindings)
 ├── tmux/
 │   └── .tmux.conf        # tmux config (prefix, appearance, plugins)
+├── ghostty/
+│   └── config            # ghostty terminal config (macOS)
 ├── setup.sh              # one-shot installer
 ├── CHEATSHEET.md         # vim + tmux quick reference
 └── README.md
