@@ -68,6 +68,42 @@ ensure_path() {
 }
 
 # ---------------------------------------------------------------------------
+# shared conda tools env
+# ---------------------------------------------------------------------------
+# Some tools (tmux, chafa) have no static Linux binary distribution, so conda
+# is the only no-root install path on HPC. Rather than installing into
+# whatever env happens to be active (base, or a work env), they go into one
+# dedicated env, and only the binary gets symlinked into ~/.local/bin. That
+# way these tools are on PATH regardless of which conda env (if any) you have
+# active for actual work, and you never touch base or a work env.
+
+CONDA_TOOLS_ENV="dotfiles-tools"
+
+conda_tools_env_path() {
+    conda env list | grep -E "^${CONDA_TOOLS_ENV}\s" | awk '{print $NF}'
+}
+
+# install_via_conda_tools_env <conda-package> [binary-name, default = package]
+install_via_conda_tools_env() {
+    local pkg="$1"
+    local bin="${2:-$1}"
+
+    if ! conda env list | grep -qE "^${CONDA_TOOLS_ENV}\s"; then
+        info "Creating conda env '$CONDA_TOOLS_ENV' for $pkg..."
+        conda create -y -n "$CONDA_TOOLS_ENV" -c conda-forge "$pkg"
+    else
+        local env_path
+        env_path="$(conda_tools_env_path)"
+        if [[ ! -x "$env_path/bin/$bin" ]]; then
+            info "Installing $pkg into '$CONDA_TOOLS_ENV'..."
+            conda install -y -n "$CONDA_TOOLS_ENV" -c conda-forge "$pkg"
+        fi
+    fi
+
+    ln -sf "$(conda_tools_env_path)/bin/$bin" "$LOCAL_BIN/$bin"
+}
+
+# ---------------------------------------------------------------------------
 # neovim
 # ---------------------------------------------------------------------------
 
@@ -150,7 +186,7 @@ install_tmux() {
         # on linux HPC without root, conda is the easiest path for tmux
         # since there's no static binary distribution
         if command_exists conda; then
-            conda install -y -c conda-forge tmux
+            install_via_conda_tools_env tmux
         elif command_exists apt-get; then
             info "Trying apt (may need sudo)..."
             sudo apt-get update && sudo apt-get install -y tmux
@@ -222,6 +258,37 @@ install_fd() {
         rm -rf "$tmp"
     fi
     ok "fd installed"
+}
+
+# ---------------------------------------------------------------------------
+# chafa (terminal image viewer — renders images via the Kitty graphics
+# protocol, which Ghostty supports, so `chafa image.png` shows real images
+# over plain SSH, no X11 forwarding needed)
+# ---------------------------------------------------------------------------
+
+install_chafa() {
+    if command_exists chafa; then
+        ok "chafa already installed ($(chafa --version | head -1))"
+        return
+    fi
+
+    info "Installing chafa..."
+
+    if is_macos; then
+        if has_brew; then
+            brew install chafa
+        fi
+    else
+        # like tmux, no static Linux binary distribution, so conda it is
+        if command_exists conda; then
+            install_via_conda_tools_env chafa
+        else
+            warn "Could not install chafa automatically (no conda found)."
+            warn "Install via conda: conda install -c conda-forge chafa"
+            return
+        fi
+    fi
+    ok "chafa installed"
 }
 
 # ---------------------------------------------------------------------------
@@ -347,6 +414,7 @@ main() {
     install_tmux
     install_ripgrep
     install_fd
+    install_chafa
     install_node
     install_configs
     ensure_shell_config
