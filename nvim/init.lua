@@ -258,7 +258,12 @@ require("lazy").setup({
         },
         config = function()
             require("mason-lspconfig").setup({
-                ensure_installed = { "pyright", "lua_ls", "clangd", "bashls", "ruff" },
+                -- basedpyright (not pyright): a drop-in pyright fork that
+                -- reimplements the auto-import features Microsoft made exclusive
+                -- to closed-source Pylance — both completion auto-imports AND the
+                -- "add import" code action (<leader>ca). Plain pyright offers
+                -- neither. Same settings/interpreter handling as pyright.
+                ensure_installed = { "basedpyright", "lua_ls", "clangd", "bashls", "ruff" },
             })
         end,
     },
@@ -305,6 +310,82 @@ require("lazy").setup({
                 }),
             })
         end,
+    },
+
+    -- ======================================================================
+    -- JUPYTER: molten-nvim
+    -- ======================================================================
+    -- WHY molten over alternatives:
+    --   - jupyter-vim: sends code to an external Jupyter Qt console, no
+    --     inline output in the buffer
+    --   - jupytext alone: converts .ipynb <-> .py for git-friendly diffs,
+    --     but doesn't execute anything — pairs well WITH molten, isn't a
+    --     replacement for it
+    --   - molten (actively maintained fork of magma-nvim): runs a real
+    --     Jupyter kernel, shows text/table/error output inline, and — via
+    --     image.nvim + the Kitty graphics protocol Ghostty already speaks —
+    --     renders plots as actual images, not ASCII art
+    --
+    -- SETUP (per work env, not automated by setup.sh — see below):
+    --   1. In whichever conda env you run notebooks from:
+    --        pip install pynvim jupyter_client ipykernel
+    --      This has to be the *active* env's python when nvim launches.
+    --      Unlike tmux/chafa (deliberately env-independent, see setup.sh),
+    --      this is meant to track your work env — the kernel needs your
+    --      project's actual packages (numpy, pandas, etc).
+    --   2. Open a .py or .ipynb file, run :MoltenInit python3
+    --
+    -- CAVEAT: plot/image output needs the image.nvim dependency below,
+    -- which needs the `magick` luarock, which needs a C compiler + an
+    -- ImageMagick dev install. That's often the one piece needing manual,
+    -- per-cluster fiddling (module load gcc; conda install -c conda-forge
+    -- imagemagick; point luarocks at it). Everything else — running cells,
+    -- text/table output, tracebacks — works from step 1 alone.
+    {
+        "benlubas/molten-nvim",
+        version = "^1.0.0",
+        build = ":UpdateRemotePlugins",
+        dependencies = { "3rd/image.nvim" },
+        init = function()
+            vim.g.molten_image_provider = "image.nvim"
+            vim.g.molten_auto_open_output = true -- pop the output window after running a cell
+            vim.g.molten_wrap_output = true
+            vim.g.molten_virt_text_output = true -- show output as virtual text under the cell
+            vim.g.molten_output_win_max_height = 20
+        end,
+        keys = {
+            { "<leader>mi", "<cmd>MoltenInit python3<CR>", desc = "Molten: init kernel" },
+            { "<leader>ml", "<cmd>MoltenEvaluateLine<CR>", desc = "Molten: run line" },
+            { "<leader>mc", "<cmd>MoltenReevaluateCell<CR>", desc = "Molten: re-run cell" },
+            { "<leader>mv", ":<C-u>MoltenEvaluateVisual<CR>gv", mode = "v", desc = "Molten: run selection" },
+            { "<leader>mo", "<cmd>MoltenShowOutput<CR>", desc = "Molten: show output" },
+            { "<leader>mh", "<cmd>MoltenHideOutput<CR>", desc = "Molten: hide output" },
+            { "<leader>md", "<cmd>MoltenDelete<CR>", desc = "Molten: delete cell output" },
+        },
+    },
+
+    -- image.nvim: renders images (molten's plot output, and usable standalone
+    -- too) via the terminal's graphics protocol. Ghostty speaks the Kitty
+    -- protocol, same one chafa uses, so this is the natural backend choice.
+    --
+    -- lazy = true: do NOT load at startup. image.nvim's setup() reaches for the
+    -- `magick` luarock, and if it's missing (e.g. no ImageMagick dev headers on
+    -- this machine) that would throw during startup and abort the rest of
+    -- init.lua. Gating it behind lazy means it only loads when molten pulls it
+    -- in on first use (the <leader>m* keys), so a missing magick can never break
+    -- your editor — worst case, molten's *plot* output is unavailable while
+    -- everything else (cells, text, tracebacks) still works.
+    {
+        "3rd/image.nvim",
+        lazy = true,
+        opts = {
+            backend = "kitty",
+            max_width = 100,
+            max_height = 12,
+            max_height_window_percentage = math.huge,
+            max_width_window_percentage = math.huge,
+            window_overlap_clear_enabled = true,
+        },
     },
 
     -- ======================================================================
@@ -409,7 +490,7 @@ require("lazy").setup({
 --   1. keymaps, set via an autocmd that fires when any server attaches
 --   2. per-server setting overrides via vim.lsp.config(), which merge onto the
 --      base definitions that nvim-lspconfig provides
--- Servers we don't override (pyright, clangd, bashls, ruff) need no entry here;
+-- Servers we don't override (clangd, bashls, ruff) need no entry here;
 -- their defaults are correct out of the box.
 
 -- LSP keymaps (set once when any server attaches to a buffer)
@@ -426,6 +507,19 @@ vim.api.nvim_create_autocmd("LspAttach", {
     end,
 })
 
+-- Advertise nvim-cmp's richer client capabilities to EVERY server (the "*"
+-- applies to all, and merges with the per-server overrides below). This matters
+-- most for pyright: auto-import completions are only sent if the client says it
+-- can apply an import edit on accept — specifically completionItem.snippetSupport
+-- and resolveSupport for additionalTextEdits. nvim's built-in defaults don't
+-- advertise those, so without this pyright silently suppresses ALL auto-import
+-- suggestions. (Pyright has no "add import" code action — that's a Pylance-only
+-- feature — so completion is the only auto-import path it offers.)
+local ok_cmp, cmp_lsp = pcall(require, "cmp_nvim_lsp")
+if ok_cmp then
+    vim.lsp.config("*", { capabilities = cmp_lsp.default_capabilities() })
+end
+
 -- lua_ls override: teach it about the LuaJIT runtime and neovim's own lua API
 -- so editing this config doesn't flood you with "undefined global vim" warnings
 vim.lsp.config("lua_ls", {
@@ -433,6 +527,35 @@ vim.lsp.config("lua_ls", {
         Lua = {
             runtime = { version = "LuaJIT" },
             workspace = { library = vim.api.nvim_get_runtime_file("", true) },
+        },
+    },
+})
+
+-- basedpyright override: pin the Python interpreter to whatever's active on PATH
+-- when nvim launches. Without this, basedpyright does its own interpreter
+-- discovery and often misses conda envs — so it flags installed packages (torch,
+-- numpy, ...) as undefined and can't offer to import them. Launch nvim from an
+-- activated env and it uses that env's python. exepath() keeps it portable — no
+-- hardcoded paths, resolves fresh each launch on Mac or HPC.
+vim.lsp.config("basedpyright", {
+    settings = {
+        -- interpreter lives in the python.* namespace (basedpyright has no
+        -- equivalent of its own, so this is read directly)
+        python = {
+            pythonPath = vim.fn.exepath("python"),
+        },
+        -- ...but analysis tuning MUST go in the basedpyright.* namespace: when
+        -- that namespace is present (nvim-lspconfig populates it), basedpyright
+        -- reads analysis settings from here and ignores python.analysis entirely.
+        -- basedpyright defaults to a very strict mode that nags about missing/
+        -- unknown types even where you never annotated anything. "basic" keeps
+        -- the checks that matter — a value that clearly contradicts an explicit
+        -- annotation still errors — while leaving unannotated code alone
+        -- (unspecified == "could be anything").
+        basedpyright = {
+            analysis = {
+                typeCheckingMode = "basic",
+            },
         },
     },
 })
