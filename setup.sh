@@ -34,6 +34,7 @@ RIPGREP_VERSION="14.1.1"
 FD_VERSION="10.2.0"
 TMUX_VERSION="3.4"
 NVM_VERSION="v0.40.1"
+GLOW_VERSION="2.1.1"
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -292,6 +293,38 @@ install_chafa() {
 }
 
 # ---------------------------------------------------------------------------
+# glow (renders markdown in the terminal — headers, code blocks, tables —
+# instead of nvim's plain syntax-highlighted view)
+# ---------------------------------------------------------------------------
+
+install_glow() {
+    if command_exists glow; then
+        ok "glow already installed ($(glow --version 2>&1 | head -1))"
+        return
+    fi
+
+    info "Installing glow $GLOW_VERSION..."
+
+    if is_macos; then
+        if has_brew; then
+            brew install glow
+        fi
+    else
+        local a
+        a="$(arch)"
+        [[ "$a" == "aarch64" ]] && a="arm64"   # glow's release assets say arm64, not aarch64
+        local url="https://github.com/charmbracelet/glow/releases/download/v${GLOW_VERSION}/glow_${GLOW_VERSION}_Linux_${a}.tar.gz"
+        local tmp
+        tmp="$(mktemp -d)"
+        curl -fsSL "$url" -o "$tmp/glow.tar.gz"
+        tar xzf "$tmp/glow.tar.gz" -C "$tmp"
+        cp "$tmp/glow" "$LOCAL_BIN/"
+        rm -rf "$tmp"
+    fi
+    ok "glow installed"
+}
+
+# ---------------------------------------------------------------------------
 # nvm + node
 # ---------------------------------------------------------------------------
 
@@ -325,9 +358,10 @@ install_node() {
 install_configs() {
     info "Installing configs..."
 
-    # backup existing
+    # backup existing — but only real files. An existing symlink is already
+    # ours (from a previous run), so there's nothing to preserve.
     for f in "$HOME/.config/nvim/init.lua" "$HOME/.tmux.conf"; do
-        if [[ -f "$f" ]]; then
+        if [[ -f "$f" && ! -L "$f" ]]; then
             warn "Backing up $f -> ${f}.bak"
             cp "$f" "${f}.bak"
         fi
@@ -339,14 +373,18 @@ install_configs() {
     rm -rf "$HOME/.local/state/nvim"
     rm -rf "$HOME/.cache/nvim"
 
-    # neovim
+    # neovim — SYMLINK, not copy: the live config points straight at the repo
+    # file, so editing ~/dotfiles/nvim/init.lua is instantly live with no
+    # re-run of this script. Tradeoff: the repo must stay put (don't move or
+    # delete it) or the link dangles. SCRIPT_DIR is absolute (see top), so the
+    # link resolves regardless of where setup.sh is invoked from.
     mkdir -p "$HOME/.config/nvim"
-    cp "$SCRIPT_DIR/nvim/init.lua" "$HOME/.config/nvim/init.lua"
-    ok "init.lua -> ~/.config/nvim/init.lua"
+    ln -sf "$SCRIPT_DIR/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+    ok "init.lua -> ~/.config/nvim/init.lua (symlink)"
 
     # tmux
-    cp "$SCRIPT_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
-    ok ".tmux.conf -> ~/.tmux.conf"
+    ln -sf "$SCRIPT_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
+    ok ".tmux.conf -> ~/.tmux.conf (symlink)"
 
     # ghostty (GUI terminal — only relevant on a local machine with a display,
     # so skip it on headless HPC nodes)
@@ -395,6 +433,26 @@ ensure_shell_config() {
         echo 'alias vim="nvim"' >> "$shell_rc"
         ok "Added vim -> nvim alias"
     fi
+
+    # force chafa to use the kitty graphics protocol — auto-detection is
+    # unreliable through an ssh + tmux hop and silently falls back to a
+    # blurry symbol/ANSI-block renderer instead of real pixels
+    if ! grep -qF 'alias chafa=' "$shell_rc" 2>/dev/null; then
+        echo 'alias chafa="chafa -f kitty"' >> "$shell_rc"
+        ok "Added chafa -f kitty alias"
+    fi
+
+    # fixmouse: escape hatch for when mouse tracking gets wedged and the
+    # terminal starts spewing raw SGR mouse reports (e.g. "35;54;19M...") as
+    # if typed. Happens when a program with mouse mode on (nvim, or tmux via
+    # `set -g mouse on`) dies/drops without sending the disable sequence, so
+    # tracking stays on but nothing consumes the events. These four DECRST
+    # escapes turn off click/drag/any-motion (1000/1002/1003) + SGR-format
+    # (1006) tracking; `reset` re-inits the terminal to clear anything left.
+    if ! grep -qF 'alias fixmouse=' "$shell_rc" 2>/dev/null; then
+        echo "alias fixmouse='printf \"\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l\"; reset'" >> "$shell_rc"
+        ok "Added fixmouse alias"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -415,6 +473,7 @@ main() {
     install_ripgrep
     install_fd
     install_chafa
+    install_glow
     install_node
     install_configs
     ensure_shell_config
